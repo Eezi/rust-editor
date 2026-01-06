@@ -1,17 +1,26 @@
-use crossterm::event::{read, Event, Event::Key, KeyCode::Char};
-use crossterm::event::{KeyEvent, KeyModifiers};
+use crossterm::event::{read, Event, Event::Key, KeyCode::Char, KeyEvent, KeyModifiers};
+use std::io::Error;
 mod terminal;
-use terminal::Terminal;
+use terminal::{Position, Size, Terminal};
+use std::env;
 
 pub struct Editor {
     should_quit: bool,
+    name: String,
+    version: String,
 }
 
 impl Editor {
-    pub const fn default() -> Self {
-        Self { should_quit: false }
+    pub fn default() -> Self {
+        dotenv::dotenv().ok();
+        let name = env::var("CARGO_PKG_NAME").unwrap_or_else(|_| "hecto".to_string());
+        let version = env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "0.1.0".to_string());
+        Self {
+            should_quit: false,
+            name,
+            version,
+        }
     }
-
     pub fn run(&mut self) {
         Terminal::initialize().unwrap();
         let result = self.repl();
@@ -19,14 +28,12 @@ impl Editor {
         result.unwrap();
     }
 
-    fn repl(&mut self) -> Result<(), std::io::Error> {
+    fn repl(&mut self) -> Result<(), Error> {
         loop {
             self.refresh_screen()?;
-
             if self.should_quit {
                 break;
             }
-
             let event = read()?;
             self.evaluate_event(&event);
         }
@@ -38,29 +45,61 @@ impl Editor {
         }) = event
         {
             match code {
-                Char('q') if *modifiers == KeyModifiers::CONTROL => self.should_quit = true,
+                Char('q') if *modifiers == KeyModifiers::CONTROL => {
+                    self.should_quit = true;
+                }
                 _ => (),
             }
         }
     }
-
-    fn refresh_screen(&self) -> Result<(), std::io::Error> {
+    fn refresh_screen(&self) -> Result<(), Error> {
+        Terminal::hide_cursor()?;
         if self.should_quit {
             Terminal::clear_screen()?;
-            print!("Goodbye. \r\n")
+            Terminal::print("Goodbye.\r\n")?;
         } else {
-            Self::draw_rows()?;
-            Terminal::move_cursor_to(0, 0)?;
+            self.draw_rows()?;
+            Terminal::move_cursor_to(Position { x: 0, y: 0 })?;
         }
+        Terminal::show_cursor()?;
+        Terminal::execute()?;
         Ok(())
     }
 
-    fn draw_rows() -> Result<(), std::io::Error> {
-        let height = Terminal::size()?.1;
+    fn draw_welcome_message(&self) -> Result<(), Error> {
+        let mut welcome_message = format!("{} editor -- version {}", self.name, self.version);
+
+        let width = Terminal::size()?.width as usize;
+        let len = welcome_message.len();
+        let padding = (width - len) / 2;
+
+        let spaces = " ".repeat(padding - 1);
+
+        welcome_message = format!("~{spaces}{welcome_message}");
+        welcome_message.truncate(width);
+
+        Terminal::print(welcome_message)?;
+        Ok(())
+    }
+
+    fn draw_empty_row() -> Result<(), Error> {
+        Terminal::print("~")?;
+        Ok(())
+    }
+
+    fn draw_rows(&self) -> Result<(), Error> {
+        let Size { height, .. } = Terminal::size()?;
         for current_row in 0..height {
-            print!("~");
+            Terminal::clear_line()?;
+
+            if current_row == height / 3 {
+                self.draw_welcome_message()?;
+            } else {
+                Self::draw_empty_row()?;
+            }
+
             if current_row + 1 < height {
-                print!("\r\n")
+                Terminal::print("\r\n")?;
             }
         }
         Ok(())
